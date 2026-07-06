@@ -85,6 +85,7 @@ case "$IN" in
 esac
 # 若目标是 ADLS Gen2（abfss）且注入了 Workload Identity 环境变量，则拼 ABFS OAuth 配置。
 CONF_ARGS=()
+ABFS_WI="off"
 if [ -n "${SPARK_ADLS_HOST:-}" ] && [ -n "${AZURE_CLIENT_ID:-}" ] && [ -n "${AZURE_FEDERATED_TOKEN_FILE:-}" ]; then
   H="$SPARK_ADLS_HOST"
   CONF_ARGS+=(--conf "spark.hadoop.fs.azure.account.auth.type.$H=OAuth")
@@ -92,9 +93,10 @@ if [ -n "${SPARK_ADLS_HOST:-}" ] && [ -n "${AZURE_CLIENT_ID:-}" ] && [ -n "${AZU
   CONF_ARGS+=(--conf "spark.hadoop.fs.azure.account.oauth2.client.id.$H=$AZURE_CLIENT_ID")
   CONF_ARGS+=(--conf "spark.hadoop.fs.azure.account.oauth2.client.endpoint.$H=https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/token")
   CONF_ARGS+=(--conf "spark.hadoop.fs.azure.account.oauth2.token.file.$H=$AZURE_FEDERATED_TOKEN_FILE")
-  echo "已启用 ABFS Workload Identity（account=$H client=$AZURE_CLIENT_ID）"
+  ABFS_WI="on(account=$H client=$AZURE_CLIENT_ID)"
 fi
-echo "提交命令: $SPARK_SUBMIT --master $SPARK_MASTER [ABFS conf x$((${#CONF_ARGS[@]}/2))] $APP $IN $SPARK_OUTPUT"
+echo "ABFS Workload Identity: $ABFS_WI"
+echo "提交命令: $SPARK_SUBMIT --master $SPARK_MASTER [ABFS-WI=$ABFS_WI] $APP $IN $SPARK_OUTPUT"
 exec "$SPARK_SUBMIT" --master "$SPARK_MASTER" ${CONF_ARGS[@]+"${CONF_ARGS[@]}"} "$APP" "$IN" "$SPARK_OUTPUT"
 """
 

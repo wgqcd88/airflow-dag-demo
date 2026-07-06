@@ -69,6 +69,12 @@ with DAG(
             title="输出目录",
             description="结果写出目录（overwrite）",
         ),
+        "image": Param(
+            WORKER_IMAGE,
+            type="string",
+            title="Worker 镜像",
+            description="任务 Pod 镜像（需含 Spark/Java）",
+        ),
     },
 ) as dag:
     submit = BashOperator(
@@ -86,7 +92,7 @@ with DAG(
         executor_config={
             "pod_override": k8s.V1Pod(
                 spec=k8s.V1PodSpec(
-                    containers=[k8s.V1Container(name="base", image=WORKER_IMAGE)]
+                    containers=[k8s.V1Container(name="base", image="{{ params.image }}")]
                 )
             )
         },

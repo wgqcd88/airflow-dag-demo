@@ -69,12 +69,6 @@ with DAG(
             title="输出目录",
             description="结果写出目录（overwrite）",
         ),
-        "image": Param(
-            WORKER_IMAGE,
-            type="string",
-            title="Worker 镜像",
-            description="任务 Pod 镜像（需含 Spark/Java）",
-        ),
     },
 ) as dag:
     submit = BashOperator(
@@ -89,10 +83,12 @@ with DAG(
         append_env=True,
         # KubernetesExecutor：用 pod_override 覆盖「本任务」Pod 的镜像。
         # 容器名必须为 "base"（与任务容器同名才会合并覆盖）。
+        # 注意：executor_config 不做 Jinja 模板渲染，故镜像只能用解析期常量
+        # （不能 {{ params.image }}）。要「按触发切换镜像」请用 spark_wordcount_kpo（KPO）。
         executor_config={
             "pod_override": k8s.V1Pod(
                 spec=k8s.V1PodSpec(
-                    containers=[k8s.V1Container(name="base", image="{{ params.image }}")]
+                    containers=[k8s.V1Container(name="base", image=WORKER_IMAGE)]
                 )
             )
         },

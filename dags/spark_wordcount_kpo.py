@@ -90,8 +90,8 @@ if [ -n "${SPARK_ADLS_HOST:-}" ] && [ -n "${AZURE_CLIENT_ID:-}" ] && [ -n "${AZU
   H="$SPARK_ADLS_HOST"
   CONF_ARGS+=(--conf "spark.hadoop.fs.azure.account.auth.type.$H=OAuth")
   CONF_ARGS+=(--conf "spark.hadoop.fs.azure.account.oauth.provider.type.$H=org.apache.hadoop.fs.azurebfs.oauth2.WorkloadIdentityTokenProvider")
+  CONF_ARGS+=(--conf "spark.hadoop.fs.azure.account.oauth2.msi.tenant.$H=$AZURE_TENANT_ID")
   CONF_ARGS+=(--conf "spark.hadoop.fs.azure.account.oauth2.client.id.$H=$AZURE_CLIENT_ID")
-  CONF_ARGS+=(--conf "spark.hadoop.fs.azure.account.oauth2.client.endpoint.$H=https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/token")
   CONF_ARGS+=(--conf "spark.hadoop.fs.azure.account.oauth2.token.file.$H=$AZURE_FEDERATED_TOKEN_FILE")
   ABFS_WI="on(account=$H client=$AZURE_CLIENT_ID)"
 fi

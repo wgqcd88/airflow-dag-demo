@@ -23,8 +23,17 @@ try:  # Airflow 3.x
 except ImportError:  # Airflow 2.x
     from airflow.operators.bash import BashOperator
 
+from kubernetes.client import models as k8s
+
 # 应用脚本随本 DAG 由 git-sync 一起拉取，解析时即可确定绝对路径。
 SPARK_APP = os.path.join(os.path.dirname(__file__), "spark_apps", "wordcount.py")
+
+# KubernetesExecutor：用 executor_config.pod_override 给「本任务」单独指定 worker 镜像
+# （含 Spark/Java），基础 airflow 组件可继续用精简镜像。可用环境变量覆盖默认值。
+WORKER_IMAGE = os.getenv(
+    "SPARK_WORKER_IMAGE",
+    "acrsparktpcdstestcca.azurecr.io/airflow-spark:4.0.1-gluten",
+)
 
 # 找 PATH 上的 spark-submit，找不到回退 $SPARK_HOME/bin/spark-submit；用双引号安全传 local[*] 与路径。
 BASH_CMD = r"""
@@ -72,4 +81,13 @@ with DAG(
             "SPARK_OUTPUT": "{{ params.output }}",
         },
         append_env=True,
+        # KubernetesExecutor：用 pod_override 覆盖「本任务」Pod 的镜像。
+        # 容器名必须为 "base"（与任务容器同名才会合并覆盖）。
+        executor_config={
+            "pod_override": k8s.V1Pod(
+                spec=k8s.V1PodSpec(
+                    containers=[k8s.V1Container(name="base", image=WORKER_IMAGE)]
+                )
+            )
+        },
     )

@@ -50,6 +50,16 @@ DEFAULT_INPUT = "https://raw.githubusercontent.com/wgqcd88/airflow-dag-demo/main
 CONTAINER_SCRIPT = r"""
 set -euo pipefail
 SPARK_SUBMIT="$(command -v spark-submit || true)"
+if [ -z "$SPARK_SUBMIT" ] && [ -n "${SPARK_HOME:-}" ] && [ -x "$SPARK_HOME/bin/spark-submit" ]; then
+  SPARK_SUBMIT="$SPARK_HOME/bin/spark-submit"
+fi
+if [ -z "$SPARK_SUBMIT" ]; then
+  PYSPARK_HOME="$(python3 -c 'import pyspark,os;print(os.path.dirname(pyspark.__file__))' 2>/dev/null || true)"
+  if [ -n "$PYSPARK_HOME" ] && [ -f "$PYSPARK_HOME/bin/spark-submit" ]; then
+    chmod +x "$PYSPARK_HOME"/bin/* 2>/dev/null || true
+    SPARK_SUBMIT="$PYSPARK_HOME/bin/spark-submit"
+  fi
+fi
 if [ -z "$SPARK_SUBMIT" ]; then SPARK_SUBMIT="${SPARK_HOME:-/opt/spark}/bin/spark-submit"; fi
 fetch() { python3 -c "import sys,urllib.request; urllib.request.urlretrieve(sys.argv[1], sys.argv[2])" "$1" "$2"; }
 APP=/tmp/wordcount.py

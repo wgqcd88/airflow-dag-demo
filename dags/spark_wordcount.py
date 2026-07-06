@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
 import subprocess
 
 import pendulum
@@ -23,6 +24,43 @@ from airflow.models.param import Param
 
 # 应用脚本随本 DAG 一起由 git-sync 拉取，解析时即可确定绝对路径。
 SPARK_APP = os.path.join(os.path.dirname(__file__), "spark_apps", "wordcount.py")
+
+
+def _spark_submit_cmd() -> list[str]:
+    """解析可用的 spark-submit 可执行命令。
+
+    某些镜像里 pip 装的 pyspark（或 COPY 进来的 Spark）其 bin/ 脚本
+    丢失了执行位，直接调 `spark-submit` 会报 PermissionError: [Errno 13]。
+    这里优先用 pyspark 自带的 bin/spark-submit，并尽力补上 +x 执行权限，
+    最后回退到 PATH 上的 spark-submit。
+    """
+    try:
+        import pyspark
+
+        bindir = os.path.join(os.path.dirname(pyspark.__file__), "bin")
+        if os.path.isdir(bindir):
+            # 尽力给 bin/ 下脚本补执行权限（spark-submit 会内部调用 spark-class 等）
+            for name in os.listdir(bindir):
+                fp = os.path.join(bindir, name)
+                try:
+                    if os.path.isfile(fp):
+                        os.chmod(fp, 0o755)
+                except OSError:
+                    pass
+            ss = os.path.join(bindir, "spark-submit")
+            if os.path.isfile(ss):
+                return [ss]
+    except Exception:
+        pass
+
+    found = shutil.which("spark-submit")
+    if found:
+        return [found]
+
+    raise RuntimeError(
+        "找不到可用的 spark-submit：请在镜像中安装 pyspark（pip install pyspark）"
+        "或部署 Spark，并确保 JAVA_HOME 已配置、bin/ 脚本具备执行权限。"
+    )
 
 
 @dag(
@@ -60,8 +98,7 @@ def spark_wordcount():
         input_path = params["input"]
         output_path = params["output"]
 
-        cmd = [
-            "spark-submit",
+        cmd = _spark_submit_cmd() + [
             "--master", master,
             SPARK_APP,
             input_path,

@@ -101,8 +101,22 @@ IN="$SPARK_INPUT"
 case "$IN" in
   http://*|https://*) fetch "$IN" /tmp/spark_input_data; IN=/tmp/spark_input_data ;;
 esac
-# 若目标是 ADLS Gen2（abfss）且注入了 Workload Identity 环境变量，则拼 ABFS OAuth 配置。
+# Spark on Kubernetes: driver 起 executor 时须知 namespace/SA/镜像；否则默认 default+spark 会 403。
 CONF_ARGS=()
+case "$SPARK_MASTER" in
+  k8s://*)
+    NS_SELF="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace 2>/dev/null || echo data-platform)"
+    CONF_ARGS+=(--conf "spark.kubernetes.namespace=$NS_SELF")
+    CONF_ARGS+=(--conf "spark.kubernetes.authenticate.driver.serviceAccountName=${SPARK_KPO_SA:-spark-sa}")
+    # executor 用同镜像（含 gluten）；driver 自己也用该镜像。
+    if [ -n "${SPARK_KPO_IMAGE:-}" ]; then
+      CONF_ARGS+=(--conf "spark.kubernetes.container.image=$SPARK_KPO_IMAGE")
+    fi
+    # executor pod 也带 WI label，方便读 abfss。
+    CONF_ARGS+=(--conf "spark.kubernetes.executor.label.azure.workload.identity/use=true")
+    ;;
+esac
+# 若目标是 ADLS Gen2（abfss）且注入了 Workload Identity 环境变量，则拼 ABFS OAuth 配置。
 ABFS_WI="off"
 if [ -n "${SPARK_ADLS_HOST:-}" ] && [ -n "${AZURE_CLIENT_ID:-}" ] && [ -n "${AZURE_FEDERATED_TOKEN_FILE:-}" ]; then
   H="$SPARK_ADLS_HOST"
@@ -208,6 +222,8 @@ with DAG(
             "SPARK_OUTPUT": "{{ params.output }}",
             "SPARK_APP_URL": SPARK_APP_URL,
             "SPARK_ADLS_HOST": ADLS_HOST,
+            "SPARK_KPO_SA": "{{ params.sa }}",
+            "SPARK_KPO_IMAGE": "{{ params.image }}",
         },
         get_logs=True,
         in_cluster=True,

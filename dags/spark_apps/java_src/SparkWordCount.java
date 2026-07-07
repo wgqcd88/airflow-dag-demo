@@ -1,5 +1,11 @@
 package com.example.spark;
 
+import java.io.InputStream;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
@@ -26,13 +32,35 @@ public final class SparkWordCount {
     private SparkWordCount() {
     }
 
+    /**
+     * http(s) 输入下载到 driver 本地临时文件并返回其 file:// URI；其余 scheme 原样返回。
+     */
+    private static String resolveInput(String input) {
+        if (input.startsWith("http://") || input.startsWith("https://")) {
+            try {
+                Path tmp = Files.createTempFile("spark_wc_input", ".txt");
+                try (InputStream in = new URL(input).openStream()) {
+                    Files.copy(in, tmp, StandardCopyOption.REPLACE_EXISTING);
+                }
+                System.out.println("已下载 http 输入到本地: " + tmp);
+                return tmp.toUri().toString();
+            } catch (Exception e) {
+                throw new RuntimeException("下载 http(s) 输入失败: " + input, e);
+            }
+        }
+        return input;
+    }
+
     public static void main(String[] args) {
         if (args.length < 2) {
             throw new IllegalArgumentException(
                     "用法: SparkWordCount <input> <output>（需要两个位置参数）");
         }
-        final String inputPath = args[0];
         final String outputPath = args[1];
+        // Spark 的 read().text() 不支持 http(s) scheme（Hadoop FS 无此 scheme）。
+        // 若 input 是 http(s) URL，先由 driver 下载到本地临时文件再读；
+        // file:// / abfss:// / hdfs:// 等路径直接透传给 Spark。
+        final String inputPath = resolveInput(args[0]);
 
         final SparkSession spark = SparkSession.builder()
                 .appName("SparkWordCount")

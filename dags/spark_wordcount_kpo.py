@@ -103,28 +103,26 @@ IN="$SPARK_INPUT"
 case "$IN" in
   http://*|https://*) fetch "$IN" /tmp/spark_input_data; IN=/tmp/spark_input_data ;;
 esac
-# Spark on Kubernetes: driver 起 executor 时须知 namespace/SA/镜像；否则默认 default+spark 会 403。
+# Spark on Kubernetes cluster mode: KPO 只 launch driver pod；driver 在独立 K8s pod 跑并起 executor。
 CONF_ARGS=()
+DEPLOY_MODE_ARGS=()
 case "$SPARK_MASTER" in
   k8s://*)
     NS_SELF="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace 2>/dev/null || echo data-platform)"
+    DEPLOY_MODE_ARGS+=(--deploy-mode cluster)
     CONF_ARGS+=(--conf "spark.kubernetes.namespace=$NS_SELF")
     CONF_ARGS+=(--conf "spark.kubernetes.authenticate.driver.serviceAccountName=${SPARK_KPO_SA:-spark-sa}")
-    # driver 是 KPO Pod（不是 spark 生成的），executor 连 driver 需要显式 host。
-    # 用 downward API 注入的 POD_IP；没有则回退 hostname -i。
-    DRIVER_HOST="${POD_IP:-$(hostname -i 2>/dev/null | awk '{print $1}')}"
-    if [ -n "$DRIVER_HOST" ]; then
-      CONF_ARGS+=(--conf "spark.driver.host=$DRIVER_HOST")
-      CONF_ARGS+=(--conf "spark.driver.bindAddress=0.0.0.0")
-    fi
-    # 让 KPO Pod 名字对应 driver（driver.pod.name 有些 spark 版本用来查资源）。
-    CONF_ARGS+=(--conf "spark.kubernetes.driver.pod.name=$(hostname)")
-    # executor 用同镜像（含 gluten）；driver 自己也用该镜像。
+    # 让 KPO 阻塞直到 driver 完成 —— 否则 KPO 会瞬间退出而 driver 还在跑。
+    CONF_ARGS+=(--conf "spark.kubernetes.submission.waitAppCompletion=true")
+    # driver + executor 用同镜像（含 gluten）。
     if [ -n "${SPARK_KPO_IMAGE:-}" ]; then
       CONF_ARGS+=(--conf "spark.kubernetes.container.image=$SPARK_KPO_IMAGE")
     fi
-    # executor pod 也带 WI label，方便读 abfss。
+    # driver 也带 WI label；executor 同样。
+    CONF_ARGS+=(--conf "spark.kubernetes.driver.label.azure.workload.identity/use=true")
     CONF_ARGS+=(--conf "spark.kubernetes.executor.label.azure.workload.identity/use=true")
+    # cluster mode driver 完成后保留 pod 便于查日志（改 delete 需 KPO app pod finish_action + spark 侧联动）。
+    CONF_ARGS+=(--conf "spark.kubernetes.driver.pod.deletionPolicy=OnCompletion")
     ;;
 esac
 # 若目标是 ADLS Gen2（abfss）且注入了 Workload Identity 环境变量，则拼 ABFS OAuth 配置。
@@ -140,12 +138,18 @@ if [ -n "${SPARK_ADLS_HOST:-}" ] && [ -n "${AZURE_CLIENT_ID:-}" ] && [ -n "${AZU
 fi
 echo "ABFS Workload Identity: $ABFS_WI"
 echo "spark-examples jar: $EX_JAR"
-echo "提交命令: $SPARK_SUBMIT --master $SPARK_MASTER --class org.apache.spark.examples.JavaWordCount [ABFS-WI=$ABFS_WI] $EX_JAR $IN"
+echo "提交命令: $SPARK_SUBMIT --master $SPARK_MASTER ${DEPLOY_MODE_ARGS[*]-} --class org.apache.spark.examples.JavaWordCount [ABFS-WI=$ABFS_WI] $EX_JAR $IN"
 # 注意：JavaWordCount 只 println 到 driver stdout，SPARK_OUTPUT 参数不使用。
+# cluster mode 下 driver 是独立 pod，需带 local:// 前缀（spark 4.x 允许 file://）；这里用 local:// 明确 in-image jar。
+JAR_URI="$EX_JAR"
+case "${DEPLOY_MODE_ARGS[*]-}" in
+  *"--deploy-mode cluster"*) JAR_URI="local://$EX_JAR" ;;
+esac
 exec "$SPARK_SUBMIT" --master "$SPARK_MASTER" \
+  ${DEPLOY_MODE_ARGS[@]+"${DEPLOY_MODE_ARGS[@]}"} \
   --class org.apache.spark.examples.JavaWordCount \
   ${CONF_ARGS[@]+"${CONF_ARGS[@]}"} \
-  "$EX_JAR" "$IN"
+  "$JAR_URI" "$IN"
 """
 
 with DAG(

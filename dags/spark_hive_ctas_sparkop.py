@@ -126,10 +126,12 @@ def build_spark_application() -> dict:
         "spark.plugins": "org.apache.gluten.GlutenPlugin",
         "spark.memory.offHeap.enabled": "true",
         "spark.memory.offHeap.size": "1g",
-        # 关键：Velox 原生 ABFS 写入器（C++）只支持 client.secret，不支持 Workload Identity，
-        # 写 ADLS 会报 "Config fs.azure.account.oauth2.client.secret... not found"。
-        # 关掉 native writer，让写入回退到 JVM 的 Hadoop ABFS（走 WI OAuth），读仍可 Gluten 加速。
+        # 关键：Velox 原生 ABFS 读/写器（C++）只支持 client.secret，不支持 Workload Identity，
+        # 访问 ADLS 会报 "Config fs.azure.account.oauth2.client.secret... not found"。
+        # 同时关掉 native writer 与 native scan，让 ADLS 读写都回退到 JVM 的 Hadoop ABFS（走 WI OAuth）。
+        # 计算算子仍由 Gluten/Velox 加速，只有 ADLS 文件 IO 走 JVM。
         "spark.gluten.sql.native.writer.enabled": "false",
+        "spark.gluten.sql.columnar.scan.enabled": "false",
     }
     spark_conf.update(_abfs_oauth_conf(ADLS_HOST))
 

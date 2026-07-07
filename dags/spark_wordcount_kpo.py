@@ -6,12 +6,12 @@ ImagePullBackOff），因此无法按「本次触发」切换镜像。Kubernetes
 arguments / env_vars 都是模板字段，可以真正用 DAG 参数 image 在每次触发时指定 worker 镜像。
 
 参数（params）触发时可在 UI「Trigger DAG w/ config」或 REST/CLI 的 --conf 覆盖：
-  - image  : 任务 Pod 镜像（需含 Spark/Java），默认 Gluten Spark 4.0.1 镜像
+    - image  : 任务 Pod 镜像（需含 Spark/Java），从 Spark 3.4.4 / 3.5.4 / 4.0.1 Gluten 镜像中选择
   - master : Spark master，如 local[*] / spark://host:7077 / k8s://https://... / yarn
-  - input  : 输入路径，默认 ADLS Gen2 对象存储 abfss://...（也支持本地路径 / http(s) URL）
-  - output : 输出目录，默认 ADLS Gen2 对象存储 abfss://...（overwrite 覆盖）
+    - input  : 输入路径，默认 GitHub raw URL（也支持 ADLS Gen2 / 本地路径 / http(s) URL）
+    - output : 输出目录，默认 /tmp/output（也支持 ADLS Gen2 abfss:// 对象存储）
 
-读写对象存储：input/output 用 ADLS Gen2（abfss://<容器>@<账户>.dfs.core.windows.net/...）。
+读写对象存储：input/output 若用 ADLS Gen2，则路径格式为 abfss://<容器>@<账户>.dfs.core.windows.net/...。
 鉴权用 Azure Workload Identity——KPO Pod 以 airflow-worker SA 运行并带
 azure.workload.identity/use=true 标签，webhook 注入 AZURE_CLIENT_ID/TENANT_ID/联合令牌文件；
 容器脚本据此拼 ABFS OAuth（WorkloadIdentityTokenProvider）spark 配置。账户共享密钥已禁用，仅走 AAD。
@@ -35,10 +35,17 @@ except ImportError:  # 旧 provider 兼容
         KubernetesPodOperator,
     )
 
-# 默认 worker 镜像（含 Spark 4.0.1 + Gluten/Velox）。可用环境变量或触发参数覆盖。
-WORKER_IMAGE = os.getenv(
-    "SPARK_WORKER_IMAGE",
-    "acrsparktpcdstestcca.azurecr.io/airflow-spark:4.0.1-gluten",
+# 可选 worker 镜像（含 Spark + Gluten/Velox）。触发 DAG 时通过 image 参数选择。
+WORKER_IMAGE_CHOICES = (
+    "ghcr.io/wgqcd88/spark:3.4.4-gluten-20260705",
+    "ghcr.io/wgqcd88/spark:3.5.4-gluten-20260705",
+    "ghcr.io/wgqcd88/spark:4.0.1-gluten-20260705",
+)
+WORKER_IMAGE_ENV = os.getenv("SPARK_WORKER_IMAGE", WORKER_IMAGE_CHOICES[-1])
+WORKER_IMAGE = (
+    WORKER_IMAGE_ENV
+    if WORKER_IMAGE_ENV in WORKER_IMAGE_CHOICES
+    else WORKER_IMAGE_CHOICES[-1]
 )
 # KPO 任务 Pod 所在命名空间（worker SA 已有在此建 Pod 的 RBAC）。
 KPO_NAMESPACE = os.getenv("SPARK_KPO_NAMESPACE", "airflow")
@@ -49,14 +56,14 @@ SPARK_APP_URL = os.getenv(
 )
 # ADLS Gen2 账户 host（用于 ABFS OAuth 配置键）。为空则不注入 ABFS 配置（如纯本地/URL 输入）。
 ADLS_HOST = os.getenv("SPARK_ADLS_HOST", "sasparktpcdstestcca.dfs.core.windows.net")
-# 默认读写对象存储（ADLS Gen2 / abfss），用 Workload Identity 鉴权。
+# 默认输入使用 GitHub raw URL；如 input/output 改用 ADLS Gen2 / abfss，则用 Workload Identity 鉴权。
 DEFAULT_INPUT = os.getenv(
     "SPARK_DEFAULT_INPUT",
-    "abfss://spark-data@sasparktpcdstestcca.dfs.core.windows.net/wordcount/input/sample.txt",
+    "https://raw.githubusercontent.com/wgqcd88/airflow-dag-demo/main/dags/spark_apps/wordcount.py",
 )
 DEFAULT_OUTPUT = os.getenv(
     "SPARK_DEFAULT_OUTPUT",
-    "abfss://spark-data@sasparktpcdstestcca.dfs.core.windows.net/wordcount/output",
+    "/tmp/output",
 )
 # KPO 任务 Pod 使用的 SA（带 azure.workload.identity/client-id 注解）。
 WORKER_SA = os.getenv("SPARK_WORKER_SA", "airflow-worker")
@@ -111,7 +118,8 @@ with DAG(
             WORKER_IMAGE,
             type="string",
             title="Worker 镜像",
-            description="任务 Pod 镜像（需含 Spark/Java）；每次触发可覆盖",
+            description="任务 Pod 镜像（需含 Spark/Java），从固定 Gluten 镜像列表中选择",
+            enum=list(WORKER_IMAGE_CHOICES),
         ),
         "master": Param(
             "local[*]",
@@ -123,13 +131,13 @@ with DAG(
             DEFAULT_INPUT,
             type="string",
             title="输入路径",
-            description="ADLS Gen2 abfss:// 对象存储（默认）/ 本地路径 / http(s) URL",
+            description="默认 GitHub raw URL；也支持 ADLS Gen2 abfss:// / 本地路径 / http(s) URL",
         ),
         "output": Param(
             DEFAULT_OUTPUT,
             type="string",
             title="输出目录",
-            description="ADLS Gen2 abfss:// 对象存储（默认，overwrite 覆盖）",
+            description="默认 /tmp/output；也支持 ADLS Gen2 abfss:// 对象存储",
         ),
     },
 ) as dag:

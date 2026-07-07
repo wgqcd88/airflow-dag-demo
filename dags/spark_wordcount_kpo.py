@@ -81,19 +81,31 @@ DEFAULT_SA = os.getenv("SPARK_WORKER_SA", "spark-sa")
 # 容器内脚本：定位 spark-submit、下载 app（必要时下载 URL 输入）、提交。
 CONTAINER_SCRIPT = r"""
 set -euo pipefail
+# 兼容 python3/python/无 python 的镜像：优先 curl，其次 wget，最后 python。
+PY="$(command -v python3 || command -v python || true)"
 SPARK_SUBMIT="$(command -v spark-submit || true)"
 if [ -z "$SPARK_SUBMIT" ] && [ -n "${SPARK_HOME:-}" ] && [ -x "$SPARK_HOME/bin/spark-submit" ]; then
   SPARK_SUBMIT="$SPARK_HOME/bin/spark-submit"
 fi
-if [ -z "$SPARK_SUBMIT" ]; then
-  PYSPARK_HOME="$(python3 -c 'import pyspark,os;print(os.path.dirname(pyspark.__file__))' 2>/dev/null || true)"
+if [ -z "$SPARK_SUBMIT" ] && [ -n "$PY" ]; then
+  PYSPARK_HOME="$($PY -c 'import pyspark,os;print(os.path.dirname(pyspark.__file__))' 2>/dev/null || true)"
   if [ -n "$PYSPARK_HOME" ] && [ -f "$PYSPARK_HOME/bin/spark-submit" ]; then
     chmod +x "$PYSPARK_HOME"/bin/* 2>/dev/null || true
     SPARK_SUBMIT="$PYSPARK_HOME/bin/spark-submit"
   fi
 fi
 if [ -z "$SPARK_SUBMIT" ]; then SPARK_SUBMIT="${SPARK_HOME:-/opt/spark}/bin/spark-submit"; fi
-fetch() { python3 -c "import sys,urllib.request; urllib.request.urlretrieve(sys.argv[1], sys.argv[2])" "$1" "$2"; }
+fetch() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL -o "$2" "$1"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -O "$2" "$1"
+  elif [ -n "$PY" ]; then
+    "$PY" -c "import sys,urllib.request; urllib.request.urlretrieve(sys.argv[1], sys.argv[2])" "$1" "$2"
+  else
+    echo "no curl/wget/python available to fetch $1" >&2; return 1
+  fi
+}
 APP=/tmp/wordcount.py
 fetch "$SPARK_APP_URL" "$APP"
 IN="$SPARK_INPUT"

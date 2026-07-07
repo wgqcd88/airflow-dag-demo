@@ -75,8 +75,14 @@ ADLS_HOST = os.getenv("SPARK_ADLS_HOST", "wgqjesa.dfs.core.windows.net")
 WAREHOUSE_DIR = os.getenv(
     "SPARK_WAREHOUSE_DIR", "abfss://warehouse@wgqjesa.dfs.core.windows.net/"
 )
-# WI 的 tenant / client-id（与 spark-sa 注解、HMS 配置一致）。
+# WI 的 tenant / client-id（与 spark-sa 注解、HMS hive-site.xml 配置一致）。
+# 注意：WorkloadIdentityTokenProvider 需显式配 client.id，不会自动读 AZURE_CLIENT_ID 环境变量。
 AZURE_TENANT_ID = os.getenv("AZURE_TENANT_ID", "16b3c013-d300-468d-ac64-7eda0820b6d3")
+AZURE_CLIENT_ID = os.getenv("AZURE_CLIENT_ID", "8b8e1707-3dd1-4942-a0f6-9f5038b5c74e")
+# WI 联合令牌文件路径（webhook 注入到 pod 的标准路径）。
+AZURE_FEDERATED_TOKEN_FILE = os.getenv(
+    "AZURE_FEDERATED_TOKEN_FILE", "/var/run/secrets/azure/tokens/azure-identity-token"
+)
 
 SERVICE_ACCOUNT = os.getenv("SPARK_SERVICE_ACCOUNT", "spark-sa")
 
@@ -92,14 +98,16 @@ EXECUTOR_MEMORY = os.getenv("SPARK_EXECUTOR_MEMORY", "2g")
 
 def _abfs_oauth_conf(host: str) -> dict:
     """ADLS Gen2 abfss 走 Workload Identity 的 OAuth 配置键（account 精确匹配 host）。"""
+    # 与 HMS hive-site.xml 完全一致的 5 个键：auth.type / provider.type / tenant / client.id / token.file。
+    # WorkloadIdentityTokenProvider 需显式配 client.id 与 token.file，缺 client.id 会报
+    # "Configuration property fs.azure.account.oauth2.client.id not found"。
     return {
         f"spark.hadoop.fs.azure.account.auth.type.{host}": "OAuth",
         f"spark.hadoop.fs.azure.account.oauth.provider.type.{host}":
             "org.apache.hadoop.fs.azurebfs.oauth2.WorkloadIdentityTokenProvider",
         f"spark.hadoop.fs.azure.account.oauth2.msi.tenant.{host}": AZURE_TENANT_ID,
-        # client.id 由 WI webhook 注入的 AZURE_CLIENT_ID 环境变量提供；
-        # WorkloadIdentityTokenProvider 会读取 AZURE_* 环境变量与联合令牌文件，
-        # 无需在此显式写死 client-id（写死也可，但环境变量更贴合 WI 惯例）。
+        f"spark.hadoop.fs.azure.account.oauth2.client.id.{host}": AZURE_CLIENT_ID,
+        f"spark.hadoop.fs.azure.account.oauth2.token.file.{host}": AZURE_FEDERATED_TOKEN_FILE,
         f"spark.hadoop.fs.azure.account.hns.enabled.{host}": "true",
     }
 

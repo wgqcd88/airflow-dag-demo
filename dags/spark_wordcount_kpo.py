@@ -38,6 +38,8 @@ except ImportError:  # 旧 provider 兼容
         KubernetesPodOperator,
     )
 
+from kubernetes.client import models as k8s
+
 # 可选 worker 镜像（含 Spark + Gluten/Velox）。触发 DAG 时通过 image 参数选择。
 WORKER_IMAGE_CHOICES = (
     "ghcr.io/wgqcd88/spark:3.4.4-gluten-20260705",
@@ -108,6 +110,15 @@ case "$SPARK_MASTER" in
     NS_SELF="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace 2>/dev/null || echo data-platform)"
     CONF_ARGS+=(--conf "spark.kubernetes.namespace=$NS_SELF")
     CONF_ARGS+=(--conf "spark.kubernetes.authenticate.driver.serviceAccountName=${SPARK_KPO_SA:-spark-sa}")
+    # driver 是 KPO Pod（不是 spark 生成的），executor 连 driver 需要显式 host。
+    # 用 downward API 注入的 POD_IP；没有则回退 hostname -i。
+    DRIVER_HOST="${POD_IP:-$(hostname -i 2>/dev/null | awk '{print $1}')}"
+    if [ -n "$DRIVER_HOST" ]; then
+      CONF_ARGS+=(--conf "spark.driver.host=$DRIVER_HOST")
+      CONF_ARGS+=(--conf "spark.driver.bindAddress=0.0.0.0")
+    fi
+    # 让 KPO Pod 名字对应 driver（driver.pod.name 有些 spark 版本用来查资源）。
+    CONF_ARGS+=(--conf "spark.kubernetes.driver.pod.name=$(hostname)")
     # executor 用同镜像（含 gluten）；driver 自己也用该镜像。
     if [ -n "${SPARK_KPO_IMAGE:-}" ]; then
       CONF_ARGS+=(--conf "spark.kubernetes.container.image=$SPARK_KPO_IMAGE")
@@ -216,15 +227,21 @@ with DAG(
         },
         image="{{ params.image }}",
         cmds=["bash", "-c", CONTAINER_SCRIPT],
-        env_vars={
-            "SPARK_MASTER": "{{ params.master }}",
-            "SPARK_INPUT": "{{ params.input }}",
-            "SPARK_OUTPUT": "{{ params.output }}",
-            "SPARK_APP_URL": SPARK_APP_URL,
-            "SPARK_ADLS_HOST": ADLS_HOST,
-            "SPARK_KPO_SA": "{{ params.sa }}",
-            "SPARK_KPO_IMAGE": "{{ params.image }}",
-        },
+        env_vars=[
+            k8s.V1EnvVar(name="SPARK_MASTER", value="{{ params.master }}"),
+            k8s.V1EnvVar(name="SPARK_INPUT", value="{{ params.input }}"),
+            k8s.V1EnvVar(name="SPARK_OUTPUT", value="{{ params.output }}"),
+            k8s.V1EnvVar(name="SPARK_APP_URL", value=SPARK_APP_URL),
+            k8s.V1EnvVar(name="SPARK_ADLS_HOST", value=ADLS_HOST),
+            k8s.V1EnvVar(name="SPARK_KPO_SA", value="{{ params.sa }}"),
+            k8s.V1EnvVar(name="SPARK_KPO_IMAGE", value="{{ params.image }}"),
+            k8s.V1EnvVar(
+                name="POD_IP",
+                value_from=k8s.V1EnvVarSource(
+                    field_ref=k8s.V1ObjectFieldSelector(field_path="status.podIP"),
+                ),
+            ),
+        ],
         get_logs=True,
         in_cluster=True,
         on_finish_action="delete_pod",

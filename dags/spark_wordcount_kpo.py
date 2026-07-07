@@ -215,6 +215,17 @@ with DAG(
             title="ServiceAccount",
             description="KPO 任务 Pod 使用的 Kubernetes ServiceAccount",
         ),
+        "app_jar_url": Param(
+            SPARK_APP_JAR_URL,
+            type="string",
+            title="应用 jar URL",
+            description=(
+                "WordCount 应用 jar 的下载地址。默认 main 分支 raw URL——注意 GitHub raw "
+                "对 mutable 分支路径有约 5 分钟 CDN 缓存，刚 push 新 jar 后立即触发可能拉到旧版。"
+                "如需立即用某次提交的 jar，改用不可变的 commit SHA 路径："
+                "https://raw.githubusercontent.com/wgqcd88/airflow-dag-demo/<commit-sha>/dags/spark_apps/wordcount-app.jar"
+            ),
+        ),
     },
 ) as dag:
     submit = KubernetesPodOperator(
@@ -249,7 +260,7 @@ with DAG(
             k8s.V1EnvVar(name="SPARK_INPUT", value="{{ params.input }}"),
             k8s.V1EnvVar(name="SPARK_OUTPUT", value="{{ params.output }}"),
             k8s.V1EnvVar(name="SPARK_APP_URL", value=SPARK_APP_URL),
-            k8s.V1EnvVar(name="SPARK_APP_JAR_URL", value=SPARK_APP_JAR_URL),
+            k8s.V1EnvVar(name="SPARK_APP_JAR_URL", value="{{ params.app_jar_url }}"),
             k8s.V1EnvVar(name="SPARK_ADLS_HOST", value=ADLS_HOST),
             k8s.V1EnvVar(name="SPARK_KPO_SA", value="{{ params.sa }}"),
             k8s.V1EnvVar(name="SPARK_KPO_IMAGE", value="{{ params.image }}"),

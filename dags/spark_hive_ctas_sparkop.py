@@ -122,16 +122,14 @@ def build_spark_application() -> dict:
     spark_conf = {
         "spark.hadoop.hive.metastore.uris": HMS_URIS,
         "spark.sql.warehouse.dir": WAREHOUSE_DIR,
-        # Gluten/Velox 插件（镜像已内置 jar）；如需纯 vanilla 可去掉这三行。
-        "spark.plugins": "org.apache.gluten.GlutenPlugin",
-        "spark.memory.offHeap.enabled": "true",
-        "spark.memory.offHeap.size": "1g",
-        # 关键：Velox 原生 ABFS 读/写器（C++）只支持 client.secret，不支持 Workload Identity，
-        # 访问 ADLS 会报 "Config fs.azure.account.oauth2.client.secret... not found"。
-        # 同时关掉 native writer 与 native scan，让 ADLS 读写都回退到 JVM 的 Hadoop ABFS（走 WI OAuth）。
-        # 计算算子仍由 Gluten/Velox 加速，只有 ADLS 文件 IO 走 JVM。
-        "spark.gluten.sql.native.writer.enabled": "false",
-        "spark.gluten.sql.columnar.scan.enabled": "false",
+        # 注意：Gluten/Velox 的原生 ABFS 读写器（C++）只支持 client.secret，不支持
+        # Workload Identity（会报 "fs.azure.account.oauth2.client.secret... not found"），
+        # 且 native.writer/columnar.scan 开关不足以完全绕开它对 ADLS 的原生 IO。
+        # 本作业以「连 HMS 建表落 ADLS」为目的、无重计算，故直接不启用 Gluten 插件，
+        # 全走 vanilla Spark + JVM Hadoop ABFS（WI OAuth）。需要 Gluten 加速且 ADLS 用 WI 时，
+        # 应改用 client.secret 鉴权或等待 Gluten 支持 WI。
+        # （如需启用 Gluten，加回 spark.plugins=org.apache.gluten.GlutenPlugin +
+        #  spark.memory.offHeap.enabled=true + offHeap.size，并解决上述 WI 写入限制。）
     }
     spark_conf.update(_abfs_oauth_conf(ADLS_HOST))
 

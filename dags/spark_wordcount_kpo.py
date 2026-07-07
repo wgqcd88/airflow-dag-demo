@@ -138,18 +138,32 @@ if [ -n "${SPARK_ADLS_HOST:-}" ] && [ -n "${AZURE_CLIENT_ID:-}" ] && [ -n "${AZU
 fi
 echo "ABFS Workload Identity: $ABFS_WI"
 echo "spark-examples jar: $EX_JAR"
-echo "提交命令: $SPARK_SUBMIT --master $SPARK_MASTER ${DEPLOY_MODE_ARGS[*]-} --class org.apache.spark.examples.JavaWordCount [ABFS-WI=$ABFS_WI] $EX_JAR $IN"
-# 注意：JavaWordCount 只 println 到 driver stdout，SPARK_OUTPUT 参数不使用。
-# cluster mode 下 driver 是独立 pod，需带 local:// 前缀（spark 4.x 允许 file://）；这里用 local:// 明确 in-image jar。
-JAR_URI="$EX_JAR"
+# WordCount 用 spark-sql 内联：读 input（可以是 file:// / abfss:// / http URL 已被 fetch 到本地），
+# 写 output（csv，overwrite）。SQL 用 shell 变量插值把参数传进去，等价于「程序参数」。
+# spark-sql 是 spark-submit 的一层包装，通吃 client/cluster mode（cluster mode 要 --files 分发 SQL 更佳）。
+SQL_FILE=/tmp/wordcount.sql
+cat > "$SQL_FILE" <<SQL_EOF
+INSERT OVERWRITE DIRECTORY '${SPARK_OUTPUT}' USING csv
+SELECT word, count(*) AS cnt FROM (
+  SELECT explode(split(lower(value), '[^a-z0-9]+')) AS word
+  FROM text.\`${IN}\`
+) WHERE word <> '' GROUP BY word ORDER BY cnt DESC LIMIT 200;
+SQL_EOF
+# cluster mode 下 SQL 文件也要分发给 driver（--files 会 stage 到 driver 工作目录）。
+SPARK_SQL_BIN="$(dirname "$SPARK_SUBMIT")/spark-sql"
+[ -x "$SPARK_SQL_BIN" ] || SPARK_SQL_BIN="${SPARK_HOME:-/opt/spark}/bin/spark-sql"
+echo "提交命令: $SPARK_SQL_BIN --master $SPARK_MASTER ${DEPLOY_MODE_ARGS[*]-} [ABFS-WI=$ABFS_WI] -f $SQL_FILE (input=$IN output=$SPARK_OUTPUT)"
+FILES_ARG=()
 case "${DEPLOY_MODE_ARGS[*]-}" in
-  *"--deploy-mode cluster"*) JAR_URI="local://$EX_JAR" ;;
+  *"--deploy-mode cluster"*) FILES_ARG+=(--files "$SQL_FILE"); SQL_FILE_REMOTE="wordcount.sql" ;;
+  *) SQL_FILE_REMOTE="$SQL_FILE" ;;
 esac
-exec "$SPARK_SUBMIT" --master "$SPARK_MASTER" \
+exec "$SPARK_SQL_BIN" --master "$SPARK_MASTER" \
   ${DEPLOY_MODE_ARGS[@]+"${DEPLOY_MODE_ARGS[@]}"} \
-  --class org.apache.spark.examples.JavaWordCount \
+  ${FILES_ARG[@]+"${FILES_ARG[@]}"} \
   ${CONF_ARGS[@]+"${CONF_ARGS[@]}"} \
-  "$JAR_URI" "$IN"
+  --conf spark.sql.warehouse.dir=/tmp/spark-warehouse \
+  -f "$SQL_FILE_REMOTE"
 """
 
 with DAG(

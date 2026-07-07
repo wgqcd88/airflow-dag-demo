@@ -122,10 +122,14 @@ def build_spark_application() -> dict:
     spark_conf = {
         "spark.hadoop.hive.metastore.uris": HMS_URIS,
         "spark.sql.warehouse.dir": WAREHOUSE_DIR,
-        # Gluten/Velox 插件（镜像已内置 jar）；如需纯 vanilla 可去掉这两行。
+        # Gluten/Velox 插件（镜像已内置 jar）；如需纯 vanilla 可去掉这三行。
         "spark.plugins": "org.apache.gluten.GlutenPlugin",
         "spark.memory.offHeap.enabled": "true",
         "spark.memory.offHeap.size": "1g",
+        # 关键：Velox 原生 ABFS 写入器（C++）只支持 client.secret，不支持 Workload Identity，
+        # 写 ADLS 会报 "Config fs.azure.account.oauth2.client.secret... not found"。
+        # 关掉 native writer，让写入回退到 JVM 的 Hadoop ABFS（走 WI OAuth），读仍可 Gluten 加速。
+        "spark.gluten.sql.native.writer.enabled": "false",
     }
     spark_conf.update(_abfs_oauth_conf(ADLS_HOST))
 

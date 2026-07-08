@@ -125,6 +125,8 @@ def build_spark_application() -> dict:
     spark_conf = {
         "spark.hadoop.hive.metastore.uris": HMS_URIS,
         "spark.sql.warehouse.dir": WAREHOUSE_DIR,
+        # Hudi 强制要求 KryoSerializer（否则 saveAsTable 报 "hoodie only support KryoSerializer"）。
+        "spark.serializer": "org.apache.spark.serializer.KryoSerializer",
         # event log -> ADLS，接 Spark History Server。
         "spark.eventLog.enabled": "true",
         "spark.eventLog.dir": EVENTLOG_DIR,

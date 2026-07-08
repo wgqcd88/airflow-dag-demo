@@ -78,6 +78,9 @@ spec:
     taskmanager.numberOfTaskSlots: "2"
     state.backend.type: rocksdb
     execution.checkpointing.interval: "30s"
+    # 指向预建的 configmap,避免 Flink 自动找不存在的 hadoop-config-<clusterid> 而使
+    # TaskManager 挂卷失败卡 Init（ADLS 实走 azure-fs-hadoop 插件,该 cm 内容为空即可）。
+    kubernetes.hadoop.conf.config-map.name: flink-hadoop-conf
     # ADLS Gen2 via Workload Identity（azure-fs-hadoop 插件读这些 fs.azure.* 配置）
     fs.azure.account.auth.type.{ADLS_HOST}: OAuth
     fs.azure.account.oauth.provider.type.{ADLS_HOST}: org.apache.hadoop.fs.azurebfs.oauth2.WorkloadIdentityTokenProvider

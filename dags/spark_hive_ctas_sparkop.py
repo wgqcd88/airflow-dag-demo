@@ -130,14 +130,21 @@ def build_spark_application() -> dict:
         # event log -> ADLS，供 Spark History Server 回看（HS 用 WI 读该目录）。
         "spark.eventLog.enabled": "true",
         "spark.eventLog.dir": EVENTLOG_DIR,
-        # 注意：Gluten/Velox 的原生 ABFS 读写器（C++）只支持 client.secret，不支持
-        # Workload Identity（会报 "fs.azure.account.oauth2.client.secret... not found"），
-        # 且 native.writer/columnar.scan 开关不足以完全绕开它对 ADLS 的原生 IO。
-        # 本作业以「连 HMS 建表落 ADLS」为目的、无重计算，故直接不启用 Gluten 插件，
-        # 全走 vanilla Spark + JVM Hadoop ABFS（WI OAuth）。需要 Gluten 加速且 ADLS 用 WI 时，
-        # 应改用 client.secret 鉴权或等待 Gluten 支持 WI。
-        # （如需启用 Gluten，加回 spark.plugins=org.apache.gluten.GlutenPlugin +
-        #  spark.memory.offHeap.enabled=true + offHeap.size，并解决上述 WI 写入限制。）
+        # 启用 Gluten/Velox 计算加速（agg/join/project 等算子走 native）。
+        "spark.plugins": "org.apache.gluten.GlutenPlugin",
+        "spark.memory.offHeap.enabled": "true",
+        "spark.memory.offHeap.size": "1g",
+        # 但 Gluten/Velox 的原生 ABFS 读写器（C++）用 fs.azure.account.auth.type=OAuth 时走
+        # ClientSecret 分支、要 client.secret，与本环境的 Workload Identity 不匹配
+        # （报 "fs.azure.account.oauth2.client.secret... not found"）。
+        # 故全局禁用原生 IO：scan（filescan/batchscan/hivetablescan）与 writer
+        # （parquet/orc writer 及 HiveFileFormat writer）全部回退到 JVM Hadoop ABFS（走 WI），
+        # 计算算子仍由 Velox 加速。注意这是全局开关，所有 scheme 的文件 IO 都走 JVM（对纯 ADLS 场景无损）。
+        "spark.gluten.sql.columnar.filescan": "false",
+        "spark.gluten.sql.columnar.batchscan": "false",
+        "spark.gluten.sql.columnar.hivetablescan": "false",
+        "spark.gluten.sql.native.writer.enabled": "false",
+        "spark.gluten.sql.native.hive.writer.enabled": "false",
     }
     spark_conf.update(_abfs_oauth_conf(ADLS_HOST))
 

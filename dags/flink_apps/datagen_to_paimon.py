@@ -69,9 +69,9 @@ def main() -> None:
         """
     )
 
-    # 3. datagen 源表（内置连接器，持续生成数据）——建在默认内存 catalog 下
-    env.execute_sql("CREATE CATALOG dgcat WITH ('type' = 'generic_in_memory')")
-    env.execute_sql("USE CATALOG dgcat")
+    # 3. datagen 源表（内置连接器，持续生成数据）——用 TEMPORARY 表建在当前 Paimon catalog
+    #    的 <db> 下（TEMPORARY 表不写入 Paimon 元数据，仅本会话可见），避免跨 catalog 引用歧义。
+    env.execute_sql(f"USE {db}")
     env.execute_sql(
         f"""
         CREATE TEMPORARY TABLE datagen_src (
@@ -93,10 +93,10 @@ def main() -> None:
         """
     )
 
-    # 4. 流式 INSERT：datagen -> Paimon 表（跨 catalog 用全限定名）
+    # 4. 流式 INSERT：datagen -> Paimon 表（同 catalog 同 db，用表名即可）
     stmt = (
-        f"INSERT INTO paimon.{db}.{table} "
-        f"SELECT id, item_id, CAST(price AS DECIMAL(10,2)), order_time FROM dgcat.default_database.datagen_src"
+        f"INSERT INTO {table} "
+        f"SELECT id, item_id, CAST(price AS DECIMAL(10,2)), order_time FROM datagen_src"
     )
     print(f"[datagen_to_paimon] 提交流作业: {stmt}")
     print(f"[datagen_to_paimon] catalog=paimon(hive) warehouse={warehouse} "

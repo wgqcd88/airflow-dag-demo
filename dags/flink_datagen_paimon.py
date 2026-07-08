@@ -94,6 +94,11 @@ spec:
       containers:
         - name: flink-main-container
           env:
+            # 清空 HADOOP_CONF_DIR：镜像自带该变量会触发 Flink 的 HadoopConfMountDecorator
+            # 挂 hadoop-config-<clusterid> configmap,但该 configmap 未生成,导致 TaskManager
+            # 挂卷失败卡 Init。我们用 azure-fs-hadoop 插件 + fs.azure.* conf,不需要 hadoop conf 目录。
+            - name: HADOOP_CONF_DIR
+              value: ""
             - name: HIVE_METASTORE_URIS
               value: "{HMS_URIS}"
             - name: PAIMON_WAREHOUSE

@@ -75,6 +75,11 @@ ADLS_HOST = os.getenv("SPARK_ADLS_HOST", "wgqjesa.dfs.core.windows.net")
 WAREHOUSE_DIR = os.getenv(
     "SPARK_WAREHOUSE_DIR", "abfss://warehouse@wgqjesa.dfs.core.windows.net/"
 )
+# Spark event log 目录——与集群 Spark History Server 的 spark.history.fs.logDirectory 一致，
+# 作业写 event log 到此，History Server(WI 读，UI 在 spark-history-lb:18080)即可回看已完成作业。
+EVENTLOG_DIR = os.getenv(
+    "SPARK_EVENTLOG_DIR", "abfss://logs@wgqjesa.dfs.core.windows.net/spark-events"
+)
 # WI 的 tenant / client-id（与 spark-sa 注解、HMS hive-site.xml 配置一致）。
 # 注意：WorkloadIdentityTokenProvider 需显式配 client.id，不会自动读 AZURE_CLIENT_ID 环境变量。
 AZURE_TENANT_ID = os.getenv("AZURE_TENANT_ID", "16b3c013-d300-468d-ac64-7eda0820b6d3")
@@ -122,6 +127,9 @@ def build_spark_application() -> dict:
     spark_conf = {
         "spark.hadoop.hive.metastore.uris": HMS_URIS,
         "spark.sql.warehouse.dir": WAREHOUSE_DIR,
+        # event log -> ADLS，供 Spark History Server 回看（HS 用 WI 读该目录）。
+        "spark.eventLog.enabled": "true",
+        "spark.eventLog.dir": EVENTLOG_DIR,
         # 注意：Gluten/Velox 的原生 ABFS 读写器（C++）只支持 client.secret，不支持
         # Workload Identity（会报 "fs.azure.account.oauth2.client.secret... not found"），
         # 且 native.writer/columnar.scan 开关不足以完全绕开它对 ADLS 的原生 IO。

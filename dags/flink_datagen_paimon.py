@@ -108,8 +108,10 @@ spec:
             - name: app-vol
               mountPath: /opt/flink/usrapp
       initContainers:
+        # 用轻量 curl 镜像拉 py。若用 flink 大镜像做 initContainer,TaskManager 每次
+        # 都要重拉大镜像、5 分钟内起不来而注册超时被杀,陷入死循环。
         - name: fetch-app
-          image: {IMAGE}
+          image: curlimages/curl:8.10.1
           command:
             - sh
             - -c

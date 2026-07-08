@@ -98,6 +98,9 @@ def build_spark_application() -> dict:
         "spark.sql.catalogImplementation": "hive",
         # 运行时从 Maven 拉 Kyuubi TPC-DS connector，并注册为 catalog `tpcds`。
         "spark.jars.packages": KYUUBI_TPCDS_PACKAGE,
+        # Spark Operator 的 pod HOME=/nonexistent 不可写，Ivy 默认缓存 $HOME/.ivy2 会报
+        # FileNotFoundException；显式指到可写的 /tmp。
+        "spark.jars.ivy": "/tmp/.ivy2",
         "spark.sql.catalog.tpcds": "org.apache.kyuubi.spark.connector.tpcds.TPCDSCatalog",
         # event log -> ADLS，接 History Server。
         "spark.eventLog.enabled": "true",

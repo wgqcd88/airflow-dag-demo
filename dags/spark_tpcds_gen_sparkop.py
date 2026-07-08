@@ -36,6 +36,13 @@ except ImportError:
         SparkKubernetesOperator,
     )
 
+from spark_resource_params import (
+    RESOURCE_PARAMS,
+    driver_spec,
+    executor_spec,
+    resource_spark_conf,
+)
+
 JOB_NAMESPACE = os.getenv("SPARK_JOB_NAMESPACE", "data-platform")
 
 # 带 python 的 Spark 4.0 lakerss 镜像（Scala 2.13）。
@@ -72,11 +79,8 @@ AZURE_FEDERATED_TOKEN_FILE = os.getenv(
 )
 SERVICE_ACCOUNT = os.getenv("SPARK_SERVICE_ACCOUNT", "spark-sa")
 
-DRIVER_CORES = int(os.getenv("SPARK_DRIVER_CORES", "1"))
-DRIVER_MEMORY = os.getenv("SPARK_DRIVER_MEMORY", "2g")
-EXECUTOR_CORES = int(os.getenv("SPARK_EXECUTOR_CORES", "2"))
-EXECUTOR_INSTANCES = int(os.getenv("SPARK_EXECUTOR_INSTANCES", "2"))
-EXECUTOR_MEMORY = os.getenv("SPARK_EXECUTOR_MEMORY", "4g")
+# driver/executor 资源改由 spark_resource_params 通用模板提供（可在触发时覆盖），
+# 见 params={**RESOURCE_PARAMS} 与 driver_spec/executor_spec/resource_spark_conf。
 
 
 def _abfs_oauth_conf(host: str) -> dict:
@@ -116,6 +120,7 @@ def build_spark_application() -> dict:
         "spark.gluten.sql.native.hive.writer.enabled": "false",
     }
     spark_conf.update(_abfs_oauth_conf(ADLS_HOST))
+    spark_conf.update(resource_spark_conf())  # spark.executor.instances = {{ params.executor_instances }}
 
     labels = {"azure.workload.identity/use": "true"}
     return {
@@ -138,18 +143,8 @@ def build_spark_application() -> dict:
                 "sparkVersion": "4.0.1",
                 "sparkConf": spark_conf,
                 "restartPolicy": {"type": "Never"},
-                "driver": {
-                    "cores": DRIVER_CORES,
-                    "memory": DRIVER_MEMORY,
-                    "serviceAccount": SERVICE_ACCOUNT,
-                    "labels": labels,
-                },
-                "executor": {
-                    "cores": EXECUTOR_CORES,
-                    "instances": EXECUTOR_INSTANCES,
-                    "memory": EXECUTOR_MEMORY,
-                    "labels": labels,
-                },
+                "driver": driver_spec(service_account=SERVICE_ACCOUNT, labels=labels),
+                "executor": executor_spec(labels=labels),
             },
         }
     }
@@ -172,6 +167,16 @@ with DAG(
             DEFAULT_APP_FILE_URL, type="string", title="PySpark 主文件 URL",
             description="默认 main 分支 raw URL；raw CDN 有缓存，紧急用 commit-SHA 路径。",
         ),
+        # 资源参数（单独显示，来自通用模板）。TPC-DS 数据量较大，覆盖模板默认为更大的默认值；
+        # 触发时仍可按 scale 调整（如 sf10 调大 executor 内存/实例数）。
+        **{**RESOURCE_PARAMS, **{
+            "executor_cpu": Param("2", type="string", title="Executor CPU",
+                                  description="每个 executor 的 CPU，如 1 / 2 / 4"),
+            "executor_memory": Param("4g", type="string", title="Executor 内存",
+                                     description="每个 executor 内存，如 4g / 8g"),
+            "executor_instances": Param("2", type="string", title="Executor 实例数",
+                                        description="executor 数量（大 scale 可调大）"),
+        }},
     },
 ) as dag:
     submit = SparkKubernetesOperator(

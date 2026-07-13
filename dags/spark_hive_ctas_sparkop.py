@@ -171,6 +171,9 @@ def build_spark_application() -> dict:
                     "--rows", "{{ params.rows }}",
                 ],
                 "sparkVersion": "3.5.4",
+                # driver web UI service 暴露公网(Azure LoadBalancer 分配公网 IP)。
+                # 注意:Spark UI 无认证,公网可访问,存在信息暴露风险。
+                "sparkUIOptions": {"serviceType": "LoadBalancer"},
                 "sparkConf": spark_conf,
                 "restartPolicy": {"type": "Never"},
                 "driver": {

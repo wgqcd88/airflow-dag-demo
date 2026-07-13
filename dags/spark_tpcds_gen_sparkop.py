@@ -48,7 +48,7 @@ JOB_NAMESPACE = os.getenv("SPARK_JOB_NAMESPACE", "data-platform")
 # 带 python 的 Spark 4.0 lakerss 镜像（Scala 2.13）。
 IMAGE = os.getenv(
     "SPARK_TPCDS_IMAGE",
-    "ghcr.io/wgqcd88/spark:4.0.1-gluten-pyspark-lakerss-20260707",
+    "ghcr.io/wgqcd88/spark:3.5.4-gluten-pyspark-lakerss-20260712",
 )
 # Kyuubi TPC-DS connector Maven 坐标（Scala 2.13 配 Spark 4.0）。
 KYUUBI_TPCDS_PACKAGE = os.getenv(

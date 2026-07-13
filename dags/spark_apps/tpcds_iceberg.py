@@ -23,6 +23,7 @@ import argparse
 import traceback
 
 from pyspark.sql import SparkSession
+from pyspark.sql.types import StructField, StructType
 
 ICE_CATALOG = "ice"
 
@@ -65,10 +66,15 @@ def main() -> None:
         dst = f"{ICE_CATALOG}.{dst_db}.{t}"
         try:
             spark.sql(f"DROP TABLE IF EXISTS {dst}")
-            # CTAS：把虚拟 tpcds 表物化成 Iceberg 表（USING iceberg）
-            spark.sql(
-                f"CREATE TABLE {dst} USING iceberg AS SELECT * FROM {src}"
+            # 不用纯 SQL CTAS：Kyuubi TPC-DS connector 把部分列标成 non-nullable(required),
+            # 但 SCD 维表(如 item)历史行这些列实际为 null，Iceberg 写 required 字段遇 null 会
+            # NullPointerException。故读源表后把所有列强制改为 nullable，再建 Iceberg 表。
+            df = spark.table(src)
+            nullable_schema = StructType(
+                [StructField(f.name, f.dataType, True, f.metadata) for f in df.schema.fields]
             )
+            df = spark.createDataFrame(df.rdd, nullable_schema)
+            df.writeTo(dst).using("iceberg").create()
             cnt = spark.table(dst).count()
             print(f"[tpcds_iceberg] OK {dst} rows={cnt}")
             results.append((t, cnt, None))

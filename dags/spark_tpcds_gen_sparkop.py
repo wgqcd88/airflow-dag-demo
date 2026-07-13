@@ -53,7 +53,7 @@ IMAGE = os.getenv(
 # Kyuubi TPC-DS connector Maven 坐标（Scala 2.13 配 Spark 4.0）。
 KYUUBI_TPCDS_PACKAGE = os.getenv(
     "KYUUBI_TPCDS_PACKAGE",
-    "org.apache.kyuubi:kyuubi-spark-connector-tpcds_2.13:1.11.1",
+    "org.apache.kyuubi:kyuubi-spark-connector-tpcds_2.12:1.11.1",
 )
 
 DEFAULT_APP_FILE_URL = os.getenv(
